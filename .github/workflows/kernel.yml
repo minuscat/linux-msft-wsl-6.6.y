@@ -1,0 +1,92 @@
+name: Build deb package
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Download apt-get dependencies
+      env:
+          DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo apt-get -y purge unattended-upgrades
+        sudo apt-get -y update
+        sudo apt-get -y install git build-essential flex bison wget \
+            libssl-dev libelf-dev bc cpio dwarves pahole
+    - name: Kernel config
+      run: |
+        cp Microsoft/config-wsl .config
+        scripts/config --set-val CONFIG_FRAME_WARN 0 \
+                       --disable SYSTEM_TRUSTED_KEYS \
+                       --disable SYSTEM_REVOCATION_KEYS \
+                       --set-str CONFIG_SYSTEM_TRUSTED_KEYS "" \
+                       --set-str CONFIG_SYSTEM_REVOCATION_KEYS "" \
+                       --undefine DEBUG_INFO \
+                       --undefine DEBUG_INFO_COMPRESSED \
+                       --undefine DEBUG_INFO_REDUCED \
+                       --undefine DEBUG_INFO_SPLIT \
+                       --undefine GDB_SCRIPTS \
+                       --set-val  DEBUG_INFO_DWARF5 n \
+                       --set-val  DEBUG_INFO_NONE y \
+                       --disable DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT \
+                       --set-val CONFIG_WERROR y \
+                       --set-val CONFIG_TCP_CONG_PRAGUE y \
+                       --set-val CONFIG_NET_IPIP y \
+                       --set-val CONFIG_NET_CLS_U32 y \
+                       --set-val CONFIG_NET_SCH_DUALPI2 y \
+                       --set-val CONFIG_NET_SCH_PIE y \
+                       --set-val CONFIG_NET_SCH_FQ y \
+                       --set-val CONFIG_NET_SCH_FQ_CODEL y \
+                       --set-val CONFIG_NET_SCH_CODEL y \
+                       --set-val CONFIG_NET_SCH_RED y \
+                       --set-val CONFIG_NET_SCH_CAKE y \
+                       --set-val CONFIG_NET_SCH_HTB y \
+                       --set-val CONFIG_NET_SCH_NETEM y \
+                       --set-val CONFIG_NET_SCH_INGRESS y \
+                       --set-val CONFIG_NET_ACT_MIRRED y \
+                       --set-val CONFIG_IFB y \
+                       --set-val CONFIG_VETH y \
+                       --set-val CONFIG_BRIDGE y \
+                       --set-val CONFIG_INET_DIAG y
+        make olddefconfig
+    - name: make-deb
+      run: make -j$(nproc) \
+            LOCALVERSION=-$(git rev-parse --short HEAD)-l4steam-${GITHUB_RUN_NUMBER}
+    - name: Extract branch name
+      id: extract_branch
+      shell: bash
+      run: |
+        echo "branch=${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}" >> $GITHUB_OUTPUT
+    - name: Zip artifacts
+      run: |
+          zip -r l4s-${{ steps.extract_branch.outputs.branch }}-l4steam.zip \
+            arch/x86/boot/bzImage vmlinux
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: kernel-artifacts
+        path: l4s-${{ steps.extract_branch.outputs.branch }}-l4steam.zip
+
+  release:
+    name: Release build artifacts for the branch
+    runs-on: ubuntu-22.04
+    needs: build
+    permissions: write-all
+    steps:
+    - name: Get artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: kernel-artifacts
+    - name: Extract branch name
+      id: extract_branch
+      shell: bash
+      run: |
+        echo "branch=${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}" >> $GITHUB_OUTPUT
+    - name: Release tip build
+      uses: pyTooling/Actions/releaser@main
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        tag: ${{ steps.extract_branch.outputs.branch }}-build
+        files: |
+          l4s-${{ steps.extract_branch.outputs.branch }}-l4steam.zip
