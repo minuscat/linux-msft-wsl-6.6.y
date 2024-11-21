@@ -56,6 +56,7 @@ static inline int virtio_net_hdr_to_skb(struct sk_buff *skb,
 	unsigned int thlen = 0;
 	unsigned int p_off = 0;
 	unsigned int ip_proto;
+	struct tcphdr *th;
 
 	if (hdr->gso_type != VIRTIO_NET_HDR_GSO_NONE) {
 		switch (hdr->gso_type & ~VIRTIO_NET_HDR_GSO_ECN) {
@@ -83,9 +84,6 @@ static inline int virtio_net_hdr_to_skb(struct sk_buff *skb,
 		default:
 			return -EINVAL;
 		}
-
-		if (hdr->gso_type & VIRTIO_NET_HDR_GSO_ECN)
-			gso_type |= SKB_GSO_TCP_ECN;
 
 		if (hdr->gso_size == 0)
 			return -EINVAL;
@@ -144,6 +142,9 @@ retry:
 				return -EINVAL;
 
 			skb_set_transport_header(skb, keys.control.thoff);
+			th = tcp_hdr(skb);
+			if (th->cwr && hdr->gso_type & VIRTIO_NET_HDR_GSO_ECN)
+				gso_type |= SKB_GSO_TCP_ACCECN;
 		} else if (gso_type) {
 			p_off = nh_min_len + thlen;
 			if (!pskb_may_pull(skb, p_off))
